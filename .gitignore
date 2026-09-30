@@ -1,0 +1,9 @@
+node_modules/
+dist/
+# Datasets and trained scenes are large; keep them out of git.
+docs/
+data/
+*.log
+.DS_Store
+__pycache__/
+.venv/
