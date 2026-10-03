@@ -2,7 +2,7 @@
 
 Photos in, a walkable 3D scene out. A 3D Gaussian Splatting renderer and trainer that runs entirely in the browser on WebGPU, with every GPU kernel, forward and backward, written from scratch.
 
-> Work in progress: the renderer, its backward pass, training and the Inside view are done. Next is training from your own photos. The plan and milestones are in [docs/PLAN.md](docs/PLAN.md).
+> The renderer, its backward pass, training, the Inside view and training from your own photos all work. The plan and milestones are in [docs/PLAN.md](docs/PLAN.md).
 
 ## Run
 
@@ -48,6 +48,19 @@ Keys 1 to 7 show what the optimizer is doing while it trains, with live curves f
 | 7 | Error | per-pixel error against the photo |
 
 The viewer (`?scene=`) has modes 1 to 3.
+
+## Your own scene
+
+```bash
+npm run download-colmap   # COLMAP, for the camera poses (Windows; elsewhere, install it)
+npm run dev
+```
+
+Open http://localhost:5173/?new and drop 50–200 photos of a place, or a video walking through it. Move around rather than turning on the spot, overlap the shots heavily, and keep the lighting steady. The page uploads them to the dev server, which runs COLMAP to find the camera poses, then opens the training page. If the photos overlap too little for a trustworthy reconstruction, it says so first. When training ends, the scene is saved to `data/<name>-trained/`. Open `?scene=<name>-trained` to walk through it.
+
+From the command line: `npm run reconstruct -- <name> --from=<photos folder>`, then `?train=<name>`.
+
+To share a scene, host its `point_cloud.ply` (and `cameras.json`) anywhere that allows cross-origin requests, and send `?ply=<url>`. A `.ply` dropped onto the viewer opens too.
 
 ## Checks
 

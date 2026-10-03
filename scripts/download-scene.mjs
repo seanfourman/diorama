@@ -5,10 +5,9 @@
 // The scenes come from the original 3DGS release (Inria), mirrored on Hugging
 // Face, and are covered by that release's license: research and personal use.
 // data/ is git-ignored, so they never end up in the repository.
-import { createWriteStream } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
-import { once } from 'node:events';
 import path from 'node:path';
+import { download } from './lib/files.mjs';
 
 const SCENES = {
   // Tanks and Temples "train": about 1.07 million Gaussians, 266 MB.
@@ -29,22 +28,6 @@ const directory = path.join(import.meta.dirname, '..', 'data', name);
 await mkdir(directory, { recursive: true });
 
 for (const [file, remote] of Object.entries(FILES)) {
-  const response = await fetch(`${base}/${remote}`);
-  if (!response.ok) throw new Error(`${remote}: HTTP ${response.status}`);
-  const total = Number(response.headers.get('content-length')) || 0;
-  const out = createWriteStream(path.join(directory, file));
-  let received = 0;
-  let nextReport = 0.1;
-  for await (const chunk of response.body) {
-    if (!out.write(chunk)) await once(out, 'drain');
-    received += chunk.length;
-    if (total && received / total >= nextReport) {
-      console.log(`${file}: ${Math.round((100 * received) / total)}%`);
-      nextReport += 0.1;
-    }
-  }
-  out.end();
-  await once(out, 'finish');
-  console.log(`${file}: done, ${(received / 2 ** 20).toFixed(1)} MiB`);
+  await download(`${base}/${remote}`, path.join(directory, file));
 }
 console.log(`Saved to ${directory}`);

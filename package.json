@@ -9,6 +9,8 @@
     "check": "npm run build && node scripts/check.mjs",
     "download-scene": "node scripts/download-scene.mjs",
     "download-photos": "node scripts/download-photos.mjs",
+    "download-colmap": "node scripts/download-colmap.mjs",
+    "reconstruct": "node scripts/reconstruct.mjs",
     "preview": "vite preview"
   },
   "devDependencies": {

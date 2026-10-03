@@ -36,6 +36,20 @@ export function parseCameras(json: unknown): TrainingCamera[] {
   });
 }
 
+/** The reverse of parseCameras: cameras.json as the reference writes it. */
+export function camerasToJson(cameras: TrainingCamera[]): CameraJson[] {
+  return cameras.map(({ name, width, height, position, right, down, forward, fx, fy }) => ({
+    img_name: name.replace(/\.[^.]+$/, ''),
+    width,
+    height,
+    position,
+    // Camera-to-world: the axes are its columns.
+    rotation: [0, 1, 2].map((r) => [right[r], down[r], forward[r]]),
+    fx,
+    fy,
+  }));
+}
+
 export function verticalFov(camera: TrainingCamera): number {
   return 2 * Math.atan(camera.height / (2 * camera.fy));
 }
@@ -86,6 +100,22 @@ export function frameScene(cameras: TrainingCamera[]): { center: Vec3; up: Vec3;
 }
 
 // Cramer's rule, or null when the system is close to singular.
+/**
+ * For a scene without cameras: the Gaussians' median point, their median
+ * distance from it, and COLMAP's usual up (−y). `positions` holds xyz every
+ * `stride` floats.
+ */
+export function frameGaussians(positions: Float32Array, stride: number): { center: Vec3; up: Vec3; radius: number } {
+  const count = Math.floor(positions.length / stride);
+  const step = Math.max(1, Math.floor(count / 5000));
+  const sample: Vec3[] = [];
+  for (let i = 0; i < count; i += step) sample.push([positions[i * stride], positions[i * stride + 1], positions[i * stride + 2]]);
+  const median = (values: number[]) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
+  const center: Vec3 = [0, 1, 2].map((k) => median(sample.map((p) => p[k]))) as Vec3;
+  const radius = median(sample.map((p) => Math.hypot(...subtract(p, center))));
+  return { center, up: [0, -1, 0], radius: Math.max(radius, 1e-3) };
+}
+
 function solve3(a: number[][], b: number[], scale: number): Vec3 | null {
   const det = (m: number[][]) =>
     m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -

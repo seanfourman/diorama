@@ -4,7 +4,7 @@ import { InsidePanel } from './insidePanel';
 import { InsideView, samplePoints, visibleDepthRange } from './insideView';
 import { initialGaussians, loadDataset, loadViews } from './loadDataset';
 import { writeGaussianPly } from './plyWriter';
-import { frameScene, verticalFov } from './sceneCameras';
+import { camerasToJson, frameScene, verticalFov, type TrainingCamera } from './sceneCameras';
 import { DEFAULT_SETTINGS, Trainer } from './trainer';
 import { ViewerCamera } from './viewerCamera';
 
@@ -28,7 +28,7 @@ export interface TrainingPageOptions {
 }
 
 export const TRAINING_CONTROLS = [
-  'Space pauses and resumes training. P saves the Gaussians as a .ply.',
+  'Space pauses and resumes training. P downloads the Gaussians as a .ply; S saves the scene into data/ (with npm run dev).',
   '1 to 7 switch the Inside view, H hides the panels. [ and ] step through the photos, the held-out ones last.',
 ].join('\n');
 /** Roughly how long each frame spends training, in milliseconds. Longer trains faster; shorter keeps the view smooth. */
@@ -94,9 +94,25 @@ export async function runTrainingPage(
       event.preventDefault();
     } else if (event.code === 'KeyP' && !saving) {
       saving = true;
-      void saveGaussians(trainer, `${name}-${trainer.iteration}.ply`).finally(() => (saving = false));
+      void downloadGaussians(trainer, `${name}-${trainer.iteration}.ply`).finally(() => (saving = false));
+    } else if (event.code === 'KeyS' && !saving) {
+      saving = true;
+      void saveScene().finally(() => (saving = false));
     }
   });
+  // Into data/<name>-trained/, as point_cloud.ply and cameras.json like the
+  // reference's output, so the viewer (?scene=<name>-trained) can open it with
+  // the photos' viewpoints. Needs the dev server's scene API.
+  const savedName = `${name}-trained`;
+  const saveScene = async () => {
+    summary.textContent = `Saving into data/${savedName}…`;
+    try {
+      await saveToData(savedName, trainer, cameras);
+      log.textContent += `\nSaved step ${count(trainer.iteration)} into data/${savedName}: open ?scene=${savedName} to walk through it.`;
+    } catch (error) {
+      log.textContent += `\nCouldn't save into data/ (${error instanceof Error ? error.message : String(error)}); P downloads the .ply instead.`;
+    }
+  };
 
   const photoLabel = (index: number) =>
     `photo ${index + 1} of ${cameras.length}${index >= trainViews.length ? ' (held out)' : ''}`;
@@ -201,8 +217,11 @@ export async function runTrainingPage(
     if (evaluateNow || measureNow) rate = { start: performance.now(), steps: trainer.iteration, perSecond: rate.perSecond };
     // The last step's densification or opacity reset would only spoil the result.
     if ((evaluateNow || measureNow) && trainer.iteration < totalSteps) await trainer.maintain();
-    // Tells scripts/check.mjs the run has finished.
-    if (evaluateNow && trainer.iteration >= totalSteps) document.body.dataset.status = 'done';
+    if (evaluateNow && trainer.iteration >= totalSteps) {
+      await saveScene();
+      // Tells scripts/check.mjs the run has finished.
+      document.body.dataset.status = 'done';
+    }
 
     showStatus();
     panel.update(inside, panelNote());
@@ -211,7 +230,18 @@ export async function runTrainingPage(
   }
 }
 
-async function saveGaussians(trainer: Trainer, fileName: string): Promise<void> {
+async function saveToData(name: string, trainer: Trainer, cameras: TrainingCamera[]): Promise<void> {
+  const files: [string, BodyInit][] = [
+    ['point_cloud.ply', writeGaussianPly(await trainer.exportRaw())],
+    ['cameras.json', JSON.stringify(camerasToJson(cameras))],
+  ];
+  for (const [file, body] of files) {
+    const response = await fetch(`/api/scenes/${encodeURIComponent(name)}/result/${file}`, { method: 'PUT', body });
+    if (!response.ok) throw new Error(response.status === 404 ? 'no scene API here; use npm run dev' : `HTTP ${response.status}`);
+  }
+}
+
+async function downloadGaussians(trainer: Trainer, fileName: string): Promise<void> {
   const url = URL.createObjectURL(writeGaussianPly(await trainer.exportRaw()));
   const link = document.createElement('a');
   link.href = url;

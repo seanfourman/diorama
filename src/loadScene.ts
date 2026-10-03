@@ -22,6 +22,27 @@ export async function loadScene(
   return { ...parseGaussianPly(ply), cameras };
 }
 
+/**
+ * Loads a trained .ply from any URL (CORS permitting), for sharing scenes. A
+ * cameras.json next to it, if there is one, gives the training photos' viewpoints.
+ */
+export async function loadPlyFromUrl(
+  url: string,
+  onProgress: (message: string) => void,
+): Promise<GaussianScene & { cameras: TrainingCamera[] }> {
+  const ply = await fetchWithProgress(url, (fraction) => onProgress(`Loading the scene… ${Math.round(fraction * 100)}%`));
+  onProgress('Reading the scene…');
+  const scene = parseGaussianPly(ply);
+  let cameras: TrainingCamera[] = [];
+  try {
+    const response = await fetch(new URL('cameras.json', new URL(url, location.href)));
+    if (response.ok) cameras = parseCameras(await response.json());
+  } catch {
+    // No cameras: the viewer frames the Gaussians instead.
+  }
+  return { ...scene, cameras };
+}
+
 async function fetchWithProgress(url: string, onProgress: (fraction: number) => void): Promise<ArrayBuffer> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Couldn't load ${url} (HTTP ${response.status}).`);

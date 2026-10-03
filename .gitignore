@@ -3,6 +3,8 @@ dist/
 # Datasets and trained scenes are large; keep them out of git.
 docs/
 data/
+# Downloaded tools (COLMAP).
+tools/
 *.log
 .DS_Store
 __pycache__/

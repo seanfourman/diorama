@@ -50,6 +50,7 @@ export class ViewerCamera {
   private poseIndex = -1;
   private spinning = true;
   private readonly keys = new Set<string>();
+  private readonly listeners = new AbortController();
 
   constructor(element: HTMLElement, options: ViewerCameraOptions = {}) {
     this.up = normalize(options.up ?? [0, 1, 0]);
@@ -120,11 +121,21 @@ export class ViewerCamera {
     this.lookAlong(pose.forward);
   }
 
+  /** Stops listening to input, for when another camera takes over. */
+  dispose(): void {
+    this.listeners.abort();
+  }
+
   private listen(element: HTMLElement): void {
-    element.addEventListener('pointerdown', (event) => {
-      this.spinning = false;
-      element.setPointerCapture(event.pointerId);
-    });
+    const { signal } = this.listeners;
+    element.addEventListener(
+      'pointerdown',
+      (event) => {
+        this.spinning = false;
+        element.setPointerCapture(event.pointerId);
+      },
+      { signal },
+    );
     element.addEventListener('pointermove', (event) => {
       if (!element.hasPointerCapture(event.pointerId)) return;
       // Either way, the scene follows the pointer: orbiting turns the camera the
@@ -133,7 +144,7 @@ export class ViewerCamera {
       if (event.movementX || event.movementY) this.poseIndex = -1;
       this.yaw += sign * event.movementX * TURN_SPEED;
       this.pitch = clamp(this.pitch - sign * event.movementY * TURN_SPEED, -1.5, 1.5);
-    });
+    }, { signal });
     element.addEventListener(
       'wheel',
       (event) => {
@@ -146,7 +157,7 @@ export class ViewerCamera {
           this.position = addScaled(this.position, this.direction(), -0.002 * event.deltaY * this.radius);
         }
       },
-      { passive: false },
+      { passive: false, signal },
     );
     // event.code names physical keys, so WASD works whatever the keyboard layout.
     window.addEventListener('keydown', (event) => {
@@ -156,9 +167,9 @@ export class ViewerCamera {
       if (event.code === 'BracketLeft') this.stepPose(-1);
       if (event.code === 'KeyO') this.orbit();
       if (event.code === 'KeyR') this.reset();
-    });
-    window.addEventListener('keyup', (event) => this.keys.delete(event.code));
-    window.addEventListener('blur', () => this.keys.clear());
+    }, { signal });
+    window.addEventListener('keyup', (event) => this.keys.delete(event.code), { signal });
+    window.addEventListener('blur', () => this.keys.clear(), { signal });
   }
 
   private direction(): Vec3 {

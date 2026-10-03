@@ -1,21 +1,25 @@
 // Opens the built app in headless Edge or Chrome on this machine's GPU with
 // ?check, waits for the page's GPU checks to finish, prints the on-page log and
 // console output, and exits with code 1 if anything failed. Run it with
-// `npm run check`, which builds first. data/ is served too, for the scenes.
+// `npm run check`, which builds first. data/ is served too, for the scenes, and
+// the scene API (scripts/lib/sceneApi.mjs) as on the dev server.
 // Options: --headed shows the browser window; --scene=<name> shows that scene
 // after the checks; --query=<query> opens the page with that query instead (for
 // example "train=train&steps=7000" trains without running the checks);
 // --timeout=<seconds> waits longer than 90 s; --screenshot=<file> saves a PNG of
 // the page once everything has loaded, and --keys=<code>,<code> then presses each
 // key in turn (KeyboardEvent codes, such as Digit4 or BracketRight) and saves
-// <file>-<code>.png after each; BROWSER=<path> picks the browser. While it waits,
-// it prints the page's status line every 30 s.
+// <file>-<code>.png after each; --upload=<folder> drives the new-scene page (use
+// with --query=new) through uploading that folder's photos, COLMAP and training;
+// BROWSER=<path> picks the browser. While it waits, it prints the page's status
+// line every 30 s.
 import { spawn, execSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { handleSceneApi } from './lib/sceneApi.mjs';
 
 const ROOT = path.join(import.meta.dirname, '..');
 const DIST = path.join(ROOT, 'dist');
@@ -43,6 +47,8 @@ if (!browserPath) {
 }
 
 const server = createServer(async (req, res) => {
+  // The scene API (uploads, COLMAP, saving trained scenes), as on the dev server.
+  if (await handleSceneApi(req, res)) return;
   const urlPath = decodeURIComponent(req.url.split('?')[0]);
   const base = urlPath.startsWith('/data/') ? ROOT : DIST;
   const file = path.join(base, urlPath === '/' ? '/index.html' : urlPath);
@@ -86,12 +92,59 @@ try {
   let status = '';
   const deadline = Date.now() + TIMEOUT_MS;
   let nextReport = Date.now() + 30_000;
-  while (status !== 'done' && status !== 'error' && Date.now() < deadline) {
-    await sleep(250);
-    status = await evaluate(send, 'document.body?.dataset.status ?? ""');
-    if (Date.now() > nextReport) {
-      nextReport += 30_000;
-      console.log(await evaluate(send, "document.querySelector('#summary')?.textContent ?? ''"));
+  const waitForResult = async () => {
+    status = '';
+    while (status !== 'done' && status !== 'error' && Date.now() < deadline) {
+      await sleep(250);
+      status = await evaluate(send, 'document.body?.dataset.status ?? ""');
+      if (Date.now() > nextReport) {
+        nextReport += 30_000;
+        // The training and viewer pages' status line, or the new-scene page's progress.
+        const line = "document.querySelector('#summary')?.textContent || document.querySelector('#progress')?.textContent || ''";
+        console.log((await evaluate(send, line)).split('\n')[0]);
+      }
+    }
+  };
+  await waitForResult();
+
+  // --upload=<folder>: on the new-scene page (?new), choose the folder's photos,
+  // press "Make the scene", and follow the page through COLMAP to training.
+  const uploadDir = option('upload');
+  if (uploadDir && status === 'done') {
+    const files = (await readdir(uploadDir)).filter((file) => /\.(jpe?g|png|mp4|mov|webm)$/i.test(file)).map((file) => path.resolve(uploadDir, file));
+    const { result } = await send('DOM.getDocument');
+    const input = await send('DOM.querySelector', { nodeId: result.root.nodeId, selector: '#files' });
+    await send('DOM.setFileInputFiles', { nodeId: input.result.nodeId, files });
+    await evaluate(send, "document.querySelector('#start').click()");
+    console.log(`Uploading ${files.length} files from ${uploadDir}…`);
+    // The new-scene page said "done" when it loaded, so first wait for it to move
+    // on to the training page, or to show an error; then for training to finish.
+    let shown = '';
+    while (Date.now() < deadline) {
+      await sleep(1000);
+      if ((await evaluate(send, 'location.search')).includes('train=')) break;
+      const progress = await evaluate(send, "document.querySelector('#progress')?.textContent ?? ''");
+      // Print each stage once, not every second's counter ("COLMAP, 12 s: …").
+      const line = progress.split('\n')[0];
+      const stage = line.replace(/\d+ s:/, '').replace(/… \d+ of \d+$/, '');
+      if (stage !== shown) {
+        shown = stage;
+        console.log(line);
+      }
+      if (progress.includes('✗')) {
+        console.log(progress);
+        status = 'error';
+        break;
+      }
+      // A weak reconstruction stops at a warning and waits for the person.
+      if (progress.includes('⚠')) {
+        console.log(progress);
+        break;
+      }
+    }
+    if (status !== 'error') {
+      await sleep(2000);
+      await waitForResult(); // the training page's
     }
   }
   const log = await evaluate(send, "document.querySelector('#log')?.textContent ?? ''");

@@ -15,7 +15,7 @@ Read `docs/PLAN.md` before starting work. It holds the milestones, the stack dec
 
 ## Commands
 
-- `npm run dev`: dev server at http://localhost:5173. Add `?scene=train` to load the real scene, `?train=train` to train it from its photos (`&steps=N` to stop early), and `?check` to run the GPU checks, which are off by default so the page opens fast.
+- `npm run dev`: dev server at http://localhost:5173. Add `?scene=train` to load the real scene, `?train=train` to train it from its photos (`&steps=N` to stop early), `?new` to make a scene from your own photos or video, `?ply=<url>` to open any trained .ply, and `?check` to run the GPU checks, which are off by default so the page opens fast. The dev server also runs the scene API (uploads, COLMAP, saving trained scenes into data/).
 - `npm run build`: typecheck with `tsc`, then a production build
 - `npm run check`: build, open the page with `?check` in headless Edge on the real GPU, print the on-page log, and exit 1 if a check prints FAIL or the console shows an error. Run it after every change. `main.ts` signals completion by setting `<body data-status>` to `done` or `error`.
 - `node scripts/check.mjs --scene=train --screenshot=<file>`: the same checks against the last build, then the real scene on screen, saved as a PNG. Look at it after any rendering change.
@@ -23,10 +23,13 @@ Read `docs/PLAN.md` before starting work. It holds the milestones, the stack dec
 - Add `--screenshot=<file> --keys=Digit4,BracketRight,Digit7` to then press each key and save `<file>-<code>.png` after each: the way to look at the Inside view's modes.
 - `npm run download-scene [-- <name>]`: fetches a trained scene (default "train", 266 MB) into `data/<name>/`, which is git-ignored. The scene's license covers research and personal use only, so check it before publishing a demo.
 - `npm run download-photos [-- <name>]`: fetches the Tanks and Temples photos with COLMAP poses (`tandt_db.zip`, 652 MB, kept in `data/`) and unpacks one scene's into `data/<name>/images` and `data/<name>/sparse/0`.
+- `npm run download-colmap`: fetches COLMAP's official Windows build without CUDA into `tools/colmap/` (git-ignored).
+- `npm run reconstruct -- <name> [--from=<photos folder>] [--sequential] [--resume=<stage>]`: COLMAP on `data/<name>/input/`, leaving `images/` and `sparse/0/` for `?train=<name>`. `--sequential` for video frames and walks; `--resume=matching|mapping|undistortion` after a failure.
+- `node scripts/check.mjs --query=new --upload=<folder> --timeout=1800`: the new-scene page end to end (upload, COLMAP, training) on a folder of photos. Add `&steps=N` to the query to keep the training short.
 
 ## Layout
 
-- `src/main.ts`: startup, then the GPU checks, then the render loop (or, with `?train=`, the training page).
+- `src/main.ts`: startup and the GPU checks, then one of the pages: the viewer, training (`?train=`) or a new scene (`?new`).
 - `src/gaussianRenderer.ts`: the renderer. First the preprocess turns 3D Gaussians into 2D splats. Then `src/tileRasterizer.ts`, a tile rasterizer in the reference's style, takes over: it counts tiles, prefix-sums the counts, writes (tile, depth) keys, sorts them, finds each tile's range, and blends each tile. Output goes to an rgba8unorm storage texture, and the canvas is configured for that.
 - `src/gaussians.ts`: CPU-side layouts of the GPU structs, with packers.
 - `src/radixSort.ts` and `src/prefixSum.ts`: GPU primitives, a stable radix sort of 32- or 64-bit keys with values, and an exclusive prefix sum. Both read their counts from GPU buffers, and neither relies on subgroups.
@@ -42,7 +45,9 @@ Read `docs/PLAN.md` before starting work. It holds the milestones, the stack dec
 - `src/mat4.ts` and `src/viewerCamera.ts`: column-major matrix math, and the orbit/walk camera that can jump to the training photos.
 - `src/testScene.ts`: the stand-in trefoil-knot scene, shown when there's no `?scene=`.
 - `src/readback.ts`: copying buffers and textures back to the CPU.
-- `scripts/check.mjs`: the headless browser runner behind `npm run check`. `scripts/download-scene.mjs` and `scripts/download-photos.mjs`: the downloaders.
+- `src/viewerPage.ts`: the viewer (`?scene=`, `?ply=`, dropped .ply files, or the knot). `src/newScenePage.ts`: the `?new` page, which prepares photos or video frames in the browser, uploads them and polls COLMAP.
+- `scripts/lib/reconstruct.mjs`: the COLMAP pipeline (features, matching, `global_mapper`, undistortion to pinhole photos of at most 1,600 pixels). `scripts/lib/sceneApi.mjs`: the scene API, mounted by `vite.config.ts` and `scripts/check.mjs`. `scripts/lib/files.mjs`: downloading and unzipping.
+- `scripts/check.mjs`: the headless browser runner behind `npm run check`. `scripts/download-*.mjs`: the downloaders.
 
 ## Working agreement
 

@@ -31,6 +31,22 @@
       #charts { display: block; width: 100%; margin-top: 8px; }
       #charts[hidden] { display: none; }
       body.bare #panel, body.bare #inside { display: none; }
+      #new-scene {
+        max-width: 760px; margin: 0 auto; padding: 32px 16px; box-sizing: border-box;
+        color: #d8dce8; font: 15px/1.55 system-ui, sans-serif;
+      }
+      #new-scene h1 { font-size: 28px; margin: 0 0 8px; }
+      #new-scene h2 { font-size: 18px; margin-top: 32px; }
+      #new-scene a { color: #7fd1ff; }
+      #new-scene .drop {
+        display: block; margin: 20px 0; padding: 48px 16px; text-align: center; cursor: pointer;
+        border: 2px dashed rgba(216, 220, 232, 0.35); border-radius: 10px;
+      }
+      #new-scene .drop.over { border-color: #7fd1ff; background: rgba(127, 209, 255, 0.08); }
+      #new-scene input, #new-scene button { font: inherit; padding: 6px 10px; border-radius: 6px; }
+      #new-scene button { margin-left: 8px; cursor: pointer; }
+      #new-scene pre { white-space: pre-wrap; font: 13px/1.5 ui-monospace, Consolas, monospace; }
+      [hidden] { display: none !important; }
     </style>
   </head>
   <body>
@@ -39,6 +55,7 @@
       <summary id="summary">Starting WebGPU…</summary>
       <pre id="log"></pre>
     </details>
+    <div id="new-scene" hidden></div>
     <div id="inside" hidden>
       <div id="modes"></div>
       <div id="legend"></div>
