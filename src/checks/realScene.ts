@@ -1,11 +1,10 @@
 import { GaussianRenderer, type CameraData } from '../gaussianRenderer';
 import { FLOATS_PER_GAUSSIAN, SH_REST_FLOATS, packGaussians, unpackSplats, type Gaussian } from '../gaussians';
-import { loadScene } from '../loadScene';
 import { IDENTITY, lookAt, perspective } from '../mat4';
 import { SH_C0, parseGaussianPly } from '../plyLoader';
 import { mulberry32 } from '../random';
 import { cameraView, verticalFov } from '../sceneCameras';
-import { readBuffer, renderPixels, verdict } from './helpers';
+import { loadSceneOnce, readBuffer, renderPixels, verdict } from './helpers';
 import { preprocess } from './reference';
 
 // M1.6:
@@ -149,7 +148,7 @@ async function checkSphericalHarmonics(device: GPUDevice): Promise<string[]> {
 async function checkRealScene(device: GPUDevice): Promise<string[]> {
   let scene;
   try {
-    scene = await loadScene('train', () => {});
+    scene = await loadSceneOnce('train');
   } catch {
     return ['Real scene: SKIP (data/train is missing; npm run download-scene fetches it)'];
   }

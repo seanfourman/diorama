@@ -16,6 +16,21 @@
       }
       #summary { padding: 8px 10px; cursor: pointer; }
       #log { margin: 0; padding: 0 10px 8px; overflow-x: auto; }
+      #inside {
+        position: fixed; bottom: 12px; left: 12px; width: 380px; max-width: calc(100vw - 24px);
+        padding: 8px 10px; box-sizing: border-box;
+        background: rgba(0, 0, 0, 0.55); color: #d8dce8; border-radius: 6px;
+        font: 12px/1.45 ui-monospace, Consolas, monospace;
+      }
+      #modes span { margin-right: 10px; opacity: 0.6; white-space: nowrap; }
+      #modes span.current { opacity: 1; font-weight: bold; color: #fff; }
+      #legend { margin-top: 6px; }
+      #scale { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+      #scale[hidden] { display: none; }
+      #scale-bar { flex: 1; height: 8px; border-radius: 2px; }
+      #charts { display: block; width: 100%; margin-top: 8px; }
+      #charts[hidden] { display: none; }
+      body.bare #panel, body.bare #inside { display: none; }
     </style>
   </head>
   <body>
@@ -24,6 +39,12 @@
       <summary id="summary">Starting WebGPU…</summary>
       <pre id="log"></pre>
     </details>
+    <div id="inside" hidden>
+      <div id="modes"></div>
+      <div id="legend"></div>
+      <div id="scale" hidden><span id="scale-low"></span><div id="scale-bar"></div><span id="scale-high"></span></div>
+      <canvas id="charts" hidden></canvas>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

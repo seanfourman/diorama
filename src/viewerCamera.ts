@@ -72,6 +72,17 @@ export class ViewerCamera {
     return this.poseIndex >= 0 ? `photo ${this.poseIndex + 1} of ${this.poses.length}` : 'walk';
   }
 
+  /** Which pose the camera is exactly at, or −1. Turning, zooming or moving leaves it. */
+  get photoIndex(): number {
+    return this.poseIndex;
+  }
+
+  /** Jumps to pose `index`. */
+  goToPhoto(index: number): void {
+    this.jumpTo(this.poses[index]);
+    this.poseIndex = index;
+  }
+
   /** Advances walking and the idle spin by `seconds`. */
   update(seconds: number): void {
     if (this.spinning && this.mode === 'orbit') this.yaw += seconds * SPIN_SPEED;
@@ -119,6 +130,7 @@ export class ViewerCamera {
       // Either way, the scene follows the pointer: orbiting turns the camera the
       // opposite way, looking around turns it the same way.
       const sign = this.mode === 'orbit' ? 1 : -1;
+      if (event.movementX || event.movementY) this.poseIndex = -1;
       this.yaw += sign * event.movementX * TURN_SPEED;
       this.pitch = clamp(this.pitch - sign * event.movementY * TURN_SPEED, -1.5, 1.5);
     });
@@ -127,6 +139,7 @@ export class ViewerCamera {
       (event) => {
         event.preventDefault();
         this.spinning = false;
+        this.poseIndex = -1;
         if (this.mode === 'orbit') {
           this.distance = clamp(this.distance * Math.exp(event.deltaY * 0.001), 0.05 * this.radius, 20 * this.radius);
         } else {
@@ -191,9 +204,7 @@ export class ViewerCamera {
   private stepPose(delta: number): void {
     const count = this.poses.length;
     if (!count) return;
-    const index = this.poseIndex < 0 ? (delta > 0 ? 0 : count - 1) : (this.poseIndex + delta + count) % count;
-    this.jumpTo(this.poses[index]);
-    this.poseIndex = index;
+    this.goToPhoto(this.poseIndex < 0 ? (delta > 0 ? 0 : count - 1) : (this.poseIndex + delta + count) % count);
   }
 }
 

@@ -1,7 +1,9 @@
 // Turns each 3D Gaussian into a 2D splat: its center in pixels, its depth, the
 // inverse of its projected 2D covariance (the "conic"), a bounding radius, and its
 // color as seen from the camera. Follows preprocessCUDA in the reference
-// rasterizer. Notes: docs/steps/1.3-3d-gaussians.md and docs/steps/1.6-real-scene.md
+// rasterizer. Its backward pass is preprocessBackward.wgsl, which recomputes the
+// same steps, so keep the two in step.
+// Notes: docs/steps/1.3-3d-gaussians.md and docs/steps/1.6-real-scene.md
 
 struct SceneParams { sh_degree: u32 }
 
@@ -14,14 +16,6 @@ struct SceneParams { sh_degree: u32 }
 
 const NEAR_CULL = 0.2; // the reference skips Gaussians closer than this
 const BLUR = 0.3;      // added to the 2D covariance so every splat covers about a pixel or more
-
-// Spherical-harmonic constants, as in the reference.
-const SH_C1 = 0.4886025119029199;
-const SH_C2 = array<f32, 5>(1.0925484305920792, -1.0925484305920792, 0.31539156525252005, -1.0925484305920792, 0.5462742152789498);
-const SH_C3 = array<f32, 7>(
-  -0.5900435899266435, 2.890611442640554, -0.4570457994644658, 0.3731763325901154,
-  -0.4570457994644658, 1.445305721320277, -0.5900435899266435,
-);
 
 @compute @workgroup_size(256)
 fn preprocess(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -77,10 +71,14 @@ fn preprocess(@builtin(global_invocation_id) id: vec3<u32>) {
   // The color seen from this camera. The base color is the degree-0 part; higher
   // degrees add how it changes with the viewing direction.
   var color = g.color;
-  if (scene_params.sh_degree > 0u) {
+  let basis_count = sh_count(scene_params.sh_degree);
+  if (basis_count > 0u) {
     // The view matrix is [W | t], so the camera sits at −Wᵀ t.
     let camera_position = -(transpose(w) * camera.view[3].xyz);
-    color += sh_color(i, normalize(g.position - camera_position), scene_params.sh_degree);
+    var basis = sh_basis(normalize(g.position - camera_position));
+    for (var k = 0u; k < basis_count; k++) {
+      color += basis[k] * sh(i, k);
+    }
   }
   // Like the reference, clamp at zero. The top end is clamped when the pixel is stored.
   color = max(color, vec3<f32>(0.0));
@@ -88,52 +86,8 @@ fn preprocess(@builtin(global_invocation_id) id: vec3<u32>) {
   splats[i] = Splat2D(mean, depth, radius, vec3<f32>(c, -b, a) / det, vec4<f32>(color, g.opacity));
 }
 
-// Coefficient k (1 to 15) of Gaussian i, rgb.
+// Coefficient k + 1 (k from 0 to 14) of Gaussian i, rgb.
 fn sh(i: u32, k: u32) -> vec3<f32> {
-  let at = i * 45u + (k - 1u) * 3u;
+  let at = i * 45u + k * 3u;
   return vec3<f32>(sh_rest[at], sh_rest[at + 1u], sh_rest[at + 2u]);
-}
-
-// The view-dependent part of a Gaussian's color: spherical harmonics of degrees 1
-// up to `degree` in direction `d`, as in computeColorFromSH in the reference.
-fn sh_color(i: u32, d: vec3<f32>, degree: u32) -> vec3<f32> {
-  let x = d.x;
-  let y = d.y;
-  let z = d.z;
-  var result = SH_C1 * (-y * sh(i, 1u) + z * sh(i, 2u) - x * sh(i, 3u));
-  if (degree > 1u) {
-    let xx = x * x;
-    let yy = y * y;
-    let zz = z * z;
-    result += SH_C2[0] * x * y * sh(i, 4u)
-      + SH_C2[1] * y * z * sh(i, 5u)
-      + SH_C2[2] * (2.0 * zz - xx - yy) * sh(i, 6u)
-      + SH_C2[3] * x * z * sh(i, 7u)
-      + SH_C2[4] * (xx - yy) * sh(i, 8u);
-    if (degree > 2u) {
-      result += SH_C3[0] * y * (3.0 * xx - yy) * sh(i, 9u)
-        + SH_C3[1] * x * y * z * sh(i, 10u)
-        + SH_C3[2] * y * (4.0 * zz - xx - yy) * sh(i, 11u)
-        + SH_C3[3] * z * (2.0 * zz - 3.0 * xx - 3.0 * yy) * sh(i, 12u)
-        + SH_C3[4] * x * (4.0 * zz - xx - yy) * sh(i, 13u)
-        + SH_C3[5] * z * (xx - yy) * sh(i, 14u)
-        + SH_C3[6] * x * (xx - 3.0 * yy) * sh(i, 15u);
-    }
-  }
-  return result;
-}
-
-// The rotation matrix of a quaternion stored as (w, x, y, z), normalized first.
-fn rotation_matrix(raw: vec4<f32>) -> mat3x3<f32> {
-  let q = normalize(raw);
-  let qw = q.x;
-  let qx = q.y;
-  let qy = q.z;
-  let qz = q.w;
-  // Column-major: each line below is one column.
-  return mat3x3<f32>(
-    1.0 - 2.0 * (qy * qy + qz * qz), 2.0 * (qx * qy + qw * qz), 2.0 * (qx * qz - qw * qy),
-    2.0 * (qx * qy - qw * qz), 1.0 - 2.0 * (qx * qx + qz * qz), 2.0 * (qy * qz + qw * qx),
-    2.0 * (qx * qz + qw * qy), 2.0 * (qy * qz - qw * qx), 1.0 - 2.0 * (qx * qx + qy * qy),
-  );
 }

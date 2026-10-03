@@ -1,6 +1,22 @@
+import { loadScene } from '../loadScene';
+
+export { readBuffer } from '../readback';
+
 // Shared plumbing for the GPU checks.
 
 export type RGB = [number, number, number];
+
+const scenes = new Map<string, ReturnType<typeof loadScene>>();
+
+/** Loads a scene from data/ once, however many checks ask for it. */
+export function loadSceneOnce(name: string): ReturnType<typeof loadScene> {
+  let scene = scenes.get(name);
+  if (!scene) {
+    scene = loadScene(name, () => {});
+    scenes.set(name, scene);
+  }
+  return scene;
+}
 
 /**
  * Creates an rgba8unorm target (size × size, or [width, height]), lets `record`
@@ -40,24 +56,6 @@ export async function renderPixels(
   readback.destroy();
   texture.destroy();
   return pixels;
-}
-
-/** Copies a GPU buffer (created with COPY_SRC) back to the CPU. */
-export async function readBuffer(device: GPUDevice, buffer: GPUBuffer): Promise<ArrayBuffer> {
-  const readback = device.createBuffer({
-    label: 'check readback',
-    size: buffer.size,
-    usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-  });
-  const encoder = device.createCommandEncoder();
-  encoder.copyBufferToBuffer(buffer, 0, readback, 0, buffer.size);
-  device.queue.submit([encoder.finish()]);
-  await readback.mapAsync(GPUMapMode.READ);
-  // The mapped range is gone after unmap(), so copy it out first.
-  const data = readback.getMappedRange().slice(0);
-  readback.unmap();
-  readback.destroy();
-  return data;
 }
 
 export function pixelAt(pixels: Uint8Array, width: number, [x, y]: [number, number]): RGB {

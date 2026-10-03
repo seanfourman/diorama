@@ -45,3 +45,14 @@ export async function initGpu(canvas: HTMLCanvasElement): Promise<Gpu> {
 
   return { adapter, device, context, format };
 }
+
+/** Matches the canvas's pixel size to its on-screen size so the image stays sharp. */
+export function resizeToDisplay(canvas: HTMLCanvasElement, maxSize: number): void {
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.min(maxSize, Math.max(1, Math.floor(canvas.clientWidth * dpr)));
+  const height = Math.min(maxSize, Math.max(1, Math.floor(canvas.clientHeight * dpr)));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+}

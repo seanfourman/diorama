@@ -8,6 +8,7 @@
     "build": "tsc && vite build",
     "check": "npm run build && node scripts/check.mjs",
     "download-scene": "node scripts/download-scene.mjs",
+    "download-photos": "node scripts/download-photos.mjs",
     "preview": "vite preview"
   },
   "devDependencies": {

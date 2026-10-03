@@ -3,8 +3,13 @@
 // console output, and exits with code 1 if anything failed. Run it with
 // `npm run check`, which builds first. data/ is served too, for the scenes.
 // Options: --headed shows the browser window; --scene=<name> shows that scene
-// after the checks; --screenshot=<file> saves a PNG of the page once everything
-// has loaded; BROWSER=<path> picks the browser.
+// after the checks; --query=<query> opens the page with that query instead (for
+// example "train=train&steps=7000" trains without running the checks);
+// --timeout=<seconds> waits longer than 90 s; --screenshot=<file> saves a PNG of
+// the page once everything has loaded, and --keys=<code>,<code> then presses each
+// key in turn (KeyboardEvent codes, such as Digit4 or BracketRight) and saves
+// <file>-<code>.png after each; BROWSER=<path> picks the browser. While it waits,
+// it prints the page's status line every 30 s.
 import { spawn, execSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -16,7 +21,9 @@ const ROOT = path.join(import.meta.dirname, '..');
 const DIST = path.join(ROOT, 'dist');
 const HTTP_PORT = 4179;
 const DEBUG_PORT = 9339;
-const TIMEOUT_MS = 90_000; // loading and checking a real scene takes a while
+const option = (name) => process.argv.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
+// Loading and checking a real scene takes a while; training takes much longer.
+const TIMEOUT_MS = Number(option('timeout') ?? 90) * 1000;
 const CONTENT_TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json' };
 const BROWSERS = [
   process.env.BROWSER,
@@ -69,8 +76,8 @@ try {
   const { send, consoleLines } = await attachToPage();
   await send('Runtime.enable');
   await send('Log.enable');
-  const scene = process.argv.find((arg) => arg.startsWith('--scene='))?.slice('--scene='.length);
-  const query = scene ? `?check&scene=${encodeURIComponent(scene)}` : '?check';
+  const scene = option('scene');
+  const query = option('query') !== undefined ? `?${option('query')}` : scene ? `?check&scene=${encodeURIComponent(scene)}` : '?check';
   const navigation = await send('Page.navigate', { url: `http://127.0.0.1:${HTTP_PORT}/${query}` });
   const navigationError = navigation.error?.message ?? navigation.result?.errorText;
   if (navigationError) console.log(`Couldn't open the page: ${navigationError}`);
@@ -78,9 +85,14 @@ try {
   // main.ts sets <body data-status> to "done" or "error" once its checks finish.
   let status = '';
   const deadline = Date.now() + TIMEOUT_MS;
+  let nextReport = Date.now() + 30_000;
   while (status !== 'done' && status !== 'error' && Date.now() < deadline) {
     await sleep(250);
     status = await evaluate(send, 'document.body?.dataset.status ?? ""');
+    if (Date.now() > nextReport) {
+      nextReport += 30_000;
+      console.log(await evaluate(send, "document.querySelector('#summary')?.textContent ?? ''"));
+    }
   }
   const log = await evaluate(send, "document.querySelector('#log')?.textContent ?? ''");
 
@@ -91,12 +103,21 @@ try {
   console.log(log || '(the page log is empty)');
   if (consoleLines.length) console.log('\nConsole:\n' + consoleLines.join('\n'));
 
-  const screenshotFile = process.argv.find((arg) => arg.startsWith('--screenshot='))?.slice('--screenshot='.length);
+  const screenshotFile = option('screenshot');
   if (screenshotFile) {
     await sleep(1000); // let a few frames render first
     const shot = await send('Page.captureScreenshot', { format: 'png' });
     await writeFile(screenshotFile, Buffer.from(shot.result.data, 'base64'));
     console.log(`\nScreenshot saved to ${screenshotFile}`);
+    for (const code of option('keys')?.split(',').filter(Boolean) ?? []) {
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', code });
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', code });
+      await sleep(1500);
+      const keyShot = await send('Page.captureScreenshot', { format: 'png' });
+      const keyFile = screenshotFile.replace(/(\.png)?$/i, `-${code}.png`);
+      await writeFile(keyFile, Buffer.from(keyShot.result.data, 'base64'));
+      console.log(`After ${code}: ${keyFile}`);
+    }
   }
 
   const problems = [];

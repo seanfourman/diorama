@@ -1,15 +1,24 @@
+import { runBackwardCheck } from './checks/backward';
+import { runDatasetCheck } from './checks/dataset';
+import { runDensifyCheck } from './checks/densify';
 import { runDepthSortCheck } from './checks/depthSort';
 import { runFirstCompute } from './checks/firstCompute';
 import { runFlatSplatsCheck } from './checks/flatSplats';
 import { runGaussiansCheck } from './checks/gaussians3d';
+import { runInsideCheck } from './checks/inside';
+import { runLossCheck } from './checks/loss';
 import { runRealSceneCheck } from './checks/realScene';
 import { runTilesCheck } from './checks/tiles';
+import { runTrainingCheck } from './checks/training';
 import { GaussianRenderer } from './gaussianRenderer';
-import { packGaussians } from './gaussians';
-import { initGpu } from './gpu';
+import { FLOATS_PER_GAUSSIAN, packGaussians } from './gaussians';
+import { initGpu, resizeToDisplay } from './gpu';
+import { InsidePanel } from './insidePanel';
+import { InsideView, samplePoints, visibleDepthRange, type InsideMode } from './insideView';
 import { loadScene } from './loadScene';
 import { frameScene, verticalFov } from './sceneCameras';
 import { trefoilKnot } from './testScene';
+import { runTrainingPage } from './trainingPage';
 import type { RGB } from './tileRasterizer';
 import { ViewerCamera } from './viewerCamera';
 
@@ -18,6 +27,7 @@ const CONTROLS = [
   'Drag to turn, scroll to zoom.',
   'WASD or arrows to fly, Q/E down and up, Shift for speed.',
   '[ and ] step through the training photos, O orbits, R resets.',
+  '1 to 3 switch the Inside view: color, depth, and work per pixel. H hides the panels.',
 ].join('\n');
 
 const params = new URLSearchParams(location.search);
@@ -55,6 +65,12 @@ async function main(): Promise<void> {
       await runDepthSortCheck(device),
       await runTilesCheck(device),
       await runRealSceneCheck(device),
+      await runBackwardCheck(device),
+      await runDatasetCheck(device),
+      await runLossCheck(device),
+      await runTrainingCheck(device),
+      await runDensifyCheck(device),
+      await runInsideCheck(device),
     ];
     log.textContent += '\n\n' + reports.join('\n\n');
     const failed = reports.some((report) => /\bFAIL\b/.test(report));
@@ -64,10 +80,25 @@ async function main(): Promise<void> {
     log.textContent += '\n\nAdd ?check to the address to run the GPU checks.';
   }
 
+  // ?train=<name> trains on data/<name>'s photos instead of showing a finished scene.
+  const trainName = params.get('train');
+  if (trainName) {
+    // &view=<mode> and &photo=<n> start in an Inside view mode, at a photo.
+    const options = {
+      totalSteps: Number(params.get('steps') ?? 30_000),
+      mode: params.get('view') ?? undefined,
+      photo: params.has('photo') ? Number(params.get('photo')) : undefined,
+    };
+    await runTrainingPage(device, context, { canvas, summary, log }, trainName, options, checkStatus);
+    return;
+  }
+
   const renderer = new GaussianRenderer(device);
   const sceneName = params.get('scene');
   let camera: ViewerCamera;
   let background: RGB;
+  let sceneSize: number;
+  let depthSample: Float32Array;
   if (sceneName) {
     const scene = await loadScene(sceneName, (message) => (summary.textContent = message));
     renderer.setGaussians(scene.gaussians, { rest: scene.shRest, degree: scene.shDegree });
@@ -80,6 +111,8 @@ async function main(): Promise<void> {
       poses: scene.cameras.map((photo) => ({ position: photo.position, forward: photo.forward, fovY: verticalFov(photo) })),
     });
     background = [0, 0, 0]; // what the scene was trained against
+    sceneSize = radius;
+    depthSample = samplePoints(scene.gaussians, FLOATS_PER_GAUSSIAN);
     log.textContent +=
       `\n\nScene: ${sceneName}, ${scene.count.toLocaleString('en-US')} Gaussians, spherical harmonics up to degree ` +
       `${scene.shDegree}, ${scene.cameras.length} training photos.`;
@@ -87,9 +120,18 @@ async function main(): Promise<void> {
     renderer.setGaussians(packGaussians(trefoilKnot(2000)));
     camera = new ViewerCamera(canvas, { eye: [1.49, 1.44, 2.17] });
     background = KNOT_BACKGROUND;
-    log.textContent += '\n\nScene: the test knot. Add ?scene=train to load a real one (npm run download-scene fetches it).';
+    sceneSize = 3;
+    depthSample = new Float32Array([0, 0, 0]);
+    log.textContent +=
+      '\n\nScene: the test knot. Add ?scene=train to load a real one (npm run download-scene fetches it), ' +
+      'or ?train=train to train one from photos (npm run download-photos fetches them).';
   }
   log.textContent += `\n${CONTROLS}`;
+  // The Inside view's modes that need no training (M4): color, depth and work.
+  const inside = new InsideView(device, renderer, [0.1 * sceneSize, 10 * sceneSize]);
+  const insidePanel = new InsidePanel(false);
+  if (inside.modes.some(({ mode }) => mode === params.get('view'))) inside.mode = params.get('view') as InsideMode;
+  window.addEventListener('keydown', (event) => inside.handleKey(event.code));
 
   let lastTime = performance.now();
   let statsStart = lastTime;
@@ -103,12 +145,9 @@ async function main(): Promise<void> {
     lastTime = time;
     resizeToDisplay(canvas, device.limits.maxTextureDimension2D);
     const encoder = device.createCommandEncoder();
-    renderer.encode(
-      encoder,
-      context.getCurrentTexture().createView(),
-      { ...camera.matrices(canvas.width / canvas.height), viewport: [canvas.width, canvas.height] },
-      background,
-    );
+    const matrices = camera.matrices(canvas.width / canvas.height);
+    if (inside.mode === 'depth' && sceneName) inside.depthRange = visibleDepthRange(depthSample, matrices.view);
+    inside.encode(encoder, context.getCurrentTexture(), { ...matrices, viewport: [canvas.width, canvas.height] }, background);
     device.queue.submit([encoder.finish()]);
     // Grows the renderer's tile buffers if this frame needed more room. Nothing waits on it.
     void renderer.afterSubmit();
@@ -120,23 +159,13 @@ async function main(): Promise<void> {
       statsStart = time;
     }
     showStatus();
+    insidePanel.update(inside);
     requestAnimationFrame(frame);
   };
   showStatus();
   requestAnimationFrame(frame);
   // Tells scripts/check.mjs the checks have finished and the scene is on screen.
   document.body.dataset.status = 'done';
-}
-
-// Match the canvas's pixel size to its on-screen size so the image stays sharp.
-function resizeToDisplay(canvas: HTMLCanvasElement, maxSize: number): void {
-  const dpr = window.devicePixelRatio || 1;
-  const width = Math.min(maxSize, Math.max(1, Math.floor(canvas.clientWidth * dpr)));
-  const height = Math.min(maxSize, Math.max(1, Math.floor(canvas.clientHeight * dpr)));
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-  }
 }
 
 main().catch((err: unknown) => {
